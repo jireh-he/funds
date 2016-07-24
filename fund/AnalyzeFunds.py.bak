@@ -1,0 +1,114 @@
+#coding:utf-8
+'''
+Created on 2016年7月21日
+
+@author: 何以勒
+'''
+import datetime
+import csv,copy
+FUNHISTORYDIR='./fundhistory/'
+import threading
+from multiprocessing.dummy import Pool as ThreadPool
+
+
+class AnalyzeFunds(object):
+    '''
+     分析每一天基金的月涨幅数据
+    '''
+
+
+    def __init__(self):
+        '''
+        Constructor
+        '''
+        self.top5=[]
+        self.lock=threading.Lock()
+        
+    '''
+    datestr 日期字符串 'yyyy-mm-dd'
+    
+    '''
+    def dateminus(self,datestr,days=30):
+        d1=datetime.datetime.strptime(datestr,'%Y-%m-%d')
+        d2=d1-datetime.timedelta(days=days)
+        return d2.strftime('%Y-%m-%d')
+    
+    def datedelta(self,datestr1,datestr2):
+        d1=datetime.datetime.strptime(datestr1,'%Y-%m-%d')
+        d2=datetime.datetime.strptime(datestr2,'%Y-%m-%d')
+        return abs((d1-d2).days)
+    def getfundbydate(self,datestr,fundcode):
+        dstr=self.dateminus(datestr, 0)
+        fundcsv=open(FUNHISTORYDIR+fundcode+'.csv','rb')
+        fundreader=csv.reader(fundcsv)
+        fundline=[]
+        try:
+            for line in fundreader:
+                if line[0].strip()<=dstr and line[4]=='开放申购':
+                    if self.datedelta(line[0].strip(), dstr)<10:
+                        fundline=line
+                    break
+        except Exception:
+            print line
+        fundcsv.close()
+        return fundline
+    
+    def getMonthRise(self,datestr,fundcode):
+        fund1=self.getfundbydate(datestr, fundcode)
+        fund2=self.getfundbydate(self.dateminus(datestr, 30), fundcode)
+        newfund=[]
+        if len(fund2)>0 and len(fund1)>0:
+            rise=(float(fund1[1])-float(fund2[1]))/float(fund2[1])
+            rise=round(rise*100,3)
+            newfund.append(fundcode)
+            newfund.append(rise)
+            newfund.append(fund1[0])
+            newfund.append(fund1[1])
+            newfund.append(fund2[0])
+            newfund.append(fund2[1])
+        return newfund
+    
+    #计算是否属于Top5
+    def calculateTop5(self,(datestr,fundcode)):
+        fundrise=self.getMonthRise(datestr, fundcode)
+        if len(fundrise)<1:
+            return None
+        self.lock.acquire()
+        if len(self.top5)==0:
+            self.top5.append(fundrise)
+        else:
+            newtop=copy.deepcopy(self.top5)
+            for i,t in enumerate(self.top5):
+                if t[1]<fundrise[1]:
+                    newtop.insert(i, fundrise)
+                    break
+                else:
+                    if i==len(self.top5)-1:
+                        newtop.append(fundrise)
+                    continue
+            self.top5=newtop[:5]
+        self.lock.release()
+        return self.top5
+    
+    def getTop5(self):
+        return self.top5
+    
+    #多线程批量获得top5
+    def batchGetTop5(self,datestr):
+        funds=[]
+        fundlist=open('fundlist.csv','rb')
+        fundreader=csv.reader(fundlist)
+        for line in fundreader:
+            if not line[0].isdigit():
+                continue
+            funds.append((datestr,line[1]))
+        self.top5=[]
+        pool=ThreadPool()
+        pool.map_async(self.calculateTop5, funds)
+        pool.close()
+        pool.join()    
+        fundlist.close()
+        return self.top5
+
+         
+            
